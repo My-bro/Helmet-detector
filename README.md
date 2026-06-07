@@ -47,13 +47,33 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 └── README.md
 ```
 
-## Predict From an Image Path
+## Predict From an Image Path or URL
 
 Run the existing PyTorch model on one image:
 
 ```bash
 uv run helmet-predict path/to/image.jpg
 ```
+
+Example using the bundled sample image:
+
+```bash
+uv run helmet-predict "dataset/example/Biker avec casque.jpeg" --device cpu
+```
+
+Run prediction from an image URL:
+
+```bash
+uv run helmet-predict "https://example.com/image.jpg"
+```
+
+Show the annotated result in a window while predicting:
+
+```bash
+uv run helmet-predict path/to/image.jpg --show
+```
+
+Close the preview window when you are done. You can also press `q` or `Esc`.
 
 Use a different model checkpoint:
 

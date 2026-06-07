@@ -5,6 +5,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import urlretrieve
 
@@ -29,6 +30,17 @@ def _existing_path(value: str) -> Path:
     if not path.exists():
         raise argparse.ArgumentTypeError(f"path does not exist: {path}")
     return path
+
+
+def _prediction_source(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return value
+
+    path = Path(value)
+    if not path.exists():
+        raise argparse.ArgumentTypeError(f"path does not exist and source is not a valid URL: {value}")
+    return str(path)
 
 
 def _read_ndjson(path: Path) -> tuple[dict, list[dict]]:
@@ -176,29 +188,59 @@ def prepare_images_dataset(
 
 def train_model(args: argparse.Namespace) -> None:
     model = YOLO(str(args.model))
+    project = args.project.resolve()
     results = model.train(
         data=str(args.data),
         epochs=args.epochs,
         imgsz=args.imgsz,
         batch=args.batch,
         device=args.device,
-        project=str(args.project),
+        project=str(project),
         name=args.name,
         pretrained=args.pretrained,
     )
     print(f"Training complete. Results saved to: {results.save_dir}")
 
 
+def _show_prediction_windows(results: list) -> None:
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError("The --show flag requires OpenCV. Install dependencies with `uv sync`.") from exc
+
+    window_name = "Helmet detector prediction"
+    for result in results:
+        image = result.plot()
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.imshow(window_name, image)
+        print("Close the prediction window, or press q / Esc, to continue.")
+
+        while True:
+            key = cv2.waitKey(100)
+            if key in {27, ord("q"), ord("Q")}:
+                break
+
+            try:
+                if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                    break
+            except cv2.error:
+                break
+
+        cv2.destroyWindow(window_name)
+
+
 def predict(args: argparse.Namespace) -> None:
     model = YOLO(str(args.model))
+    project = args.project.resolve()
     results = model.predict(
         source=str(args.source),
         conf=args.conf,
         imgsz=args.imgsz,
         device=args.device,
-        project=str(args.project),
+        project=str(project),
         name=args.name,
         save=args.save,
+        show=False,
         save_txt=args.save_txt,
         save_conf=args.save_txt,
     )
@@ -217,7 +259,11 @@ def predict(args: argparse.Namespace) -> None:
             print(f"- {names[class_id]} {confidence:.3f} bbox={xyxy}")
 
     if args.save:
-        print(f"\nPrediction images saved under: {args.project / args.name}")
+        save_dir = results[0].save_dir if results else project / args.name
+        print(f"\nPrediction images saved under: {save_dir}")
+
+    if args.show:
+        _show_prediction_windows(results)
 
 
 def _parse_names(value: str) -> dict[int, str]:
@@ -263,8 +309,8 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--pretrained", action=argparse.BooleanOptionalAction, default=True)
     train.set_defaults(func=train_model)
 
-    predict_parser = subparsers.add_parser("predict", help="Run prediction on an image, folder, video, or stream path.")
-    predict_parser.add_argument("source", type=_existing_path, help="Path to an image/video/folder to predict.")
+    predict_parser = subparsers.add_parser("predict", help="Run prediction on an image, URL, folder, video, or stream path.")
+    predict_parser.add_argument("source", type=_prediction_source, help="Path or http(s) URL to predict.")
     predict_parser.add_argument("--model", type=_existing_path, default=DEFAULT_MODEL)
     predict_parser.add_argument("--conf", type=float, default=0.25)
     predict_parser.add_argument("--imgsz", type=_positive_int, default=640)
@@ -272,6 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
     predict_parser.add_argument("--project", type=Path, default=Path("runs/predict"))
     predict_parser.add_argument("--name", default="helmet-detector")
     predict_parser.add_argument("--save", action=argparse.BooleanOptionalAction, default=True)
+    predict_parser.add_argument("--show", action="store_true", help="Display predictions and close cleanly when the window is closed.")
     predict_parser.add_argument("--save-txt", action="store_true")
     predict_parser.set_defaults(func=predict)
 
